@@ -20,7 +20,7 @@ from .raster import (
     RasterSource,
     XArrayRasterSource,
 )
-from .writer import GDALWriter, JSONWriter, PandasWriter, QGISWriter, Writer
+from .writer import GDALWriter, JSONWriter, PandasWriter, QGISWriter, Writer, XArrayWriter
 
 __all__ = ["exact_extract"]
 
@@ -290,6 +290,8 @@ def prep_writer(output, srs_wkt, options):
         return QGISWriter(srs_wkt=srs_wkt, **options)
     elif output == "gdal":
         return GDALWriter(srs_wkt=srs_wkt, **options)
+    elif output == "xarray":
+        return XArrayWriter(**options)
 
     raise Exception("Unsupported value of output")
 
