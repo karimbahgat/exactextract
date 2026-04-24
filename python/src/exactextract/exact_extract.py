@@ -430,6 +430,20 @@ def exact_extract(
                  function may be provided that will be called with the completion fraction
                  and a status message.
     """
+    # Auto-resolve dim_coords for xarray inputs before prep_raster() converts
+    # them to RasterSource objects (after which the original DataArray is gone).
+    if output == "xarray":
+        output_options = dict(output_options or {})
+        if "dim_coords" not in output_options:
+            dim_name = output_options.get("dim_name", "band")
+            try:
+                import xarray
+                if isinstance(rast, (xarray.DataArray, xarray.Dataset)):
+                    if dim_name in rast.coords:
+                        output_options["dim_coords"] = rast.coords[dim_name].values
+            except ImportError:
+                pass
+
     rast = prep_raster(rast)
     weights = prep_raster(weights, name_root="weight")
     vec = prep_vec(vec)
