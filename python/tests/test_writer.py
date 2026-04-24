@@ -1,10 +1,11 @@
 import json
 
 import pytest
+import numpy as np
 
 from exactextract import Operation
 from exactextract.feature import JSONFeature
-from exactextract.writer import GDALWriter, JSONWriter, PandasWriter, QGISWriter
+from exactextract.writer import GDALWriter, JSONWriter, PandasWriter, QGISWriter, XArrayWriter
 
 
 @pytest.fixture()
@@ -179,3 +180,27 @@ def test_qgis_writer(np_raster_source, point_features):
     assert qgs_features[0].geometry().asWkt() == "Point (3 8)"
     assert qgs_features[1].hasGeometry()
     assert qgs_features[1].geometry().asWkt() == "Point (2 2)"
+
+
+def test_xarray_writer(np_raster_source, point_features):
+    xr = pytest.importorskip("xarray")
+
+    times = np.array([np.datetime64("2020-01-01"), np.datetime64("2020-02-01")])
+
+    w = XArrayWriter(dim_name="time", dim_coords=times)
+
+    w.add_column("id")
+    w.add_operation(Operation("mean", "band_1_mean", np_raster_source))
+    w.add_operation(Operation("mean", "band_2_mean", np_raster_source))
+
+    for f in point_features:
+        f.feature["properties"]["band_1_mean"] = float(f.feature["id"])
+        f.feature["properties"]["band_2_mean"] = float(f.feature["id"]) * 2
+        w.write(f)
+
+    ds = w.features()
+
+    assert isinstance(ds, xr.Dataset)
+    assert ds.dims["feature"] == 2
+    assert ds.dims["time"] == 2
+    np.testing.assert_array_equal(ds.coords["time"], times)
