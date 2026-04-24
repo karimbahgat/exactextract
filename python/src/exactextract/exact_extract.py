@@ -425,7 +425,12 @@ def exact_extract(
                            to maintain results for all features in memory at a single time,
                            which may be significant for operations with large result sizes
                            such as ``cell_id``, ``values``, etc.
-       output_options: an optional dictionary of options passed to the :py:class:`writer.JSONWriter`, :py:class:`writer.PandasWriter`, or :py:class:`writer.GDALWriter`.
+                 - "xarray": return as an ``xarray.Dataset`` with dimensions ``(feature, <dim_name>)``.
+                            Recognizes the following ``output_options``: ``dim_name`` (default: ``"band"``) and
+                            ``dim_coords``. When the input raster is an :py:class:`xarray.DataArray` or
+                            :py:class:`xarray.Dataset`, ``dim_coords`` are inferred automatically from ``dim_name``
+                            if that coordinate exists on the input.
+       output_options: an optional dictionary of options passed to the :py:class:`writer.JSONWriter`, :py:class:`writer.PandasWriter`, :py:class:`writer.GDALWriter`, or :py:class:`writer.XArrayWriter`.
        progress: if `True`, a progress bar will be displayed. Alternatively, a
                  function may be provided that will be called with the completion fraction
                  and a status message.
