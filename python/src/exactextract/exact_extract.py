@@ -426,28 +426,48 @@ def exact_extract(
                            which may be significant for operations with large result sizes
                            such as ``cell_id``, ``values``, etc.
                  - "xarray": return as an ``xarray.Dataset`` with dimensions ``(feature, <dim_name>)``.
-                            Recognizes the following ``output_options``: ``dim_name`` (default: ``"band"``) and
-                            ``dim_coords``. When the input raster is an :py:class:`xarray.DataArray` or
-                            :py:class:`xarray.Dataset`, ``dim_coords`` are inferred automatically from ``dim_name``
-                            if that coordinate exists on the input.
+                            When the input is an :py:class:`xarray.DataArray` or :py:class:`xarray.Dataset`
+                            with a single non-spatial dimension, ``dim_name`` and ``dim_coords`` are inferred
+                            automatically. XArrays with multiple non-spatial dimensions will return ValueError. 
+                            For all other raster types, or when the non-spatial dimension has
+                            no coordinates, integer band indices are used. Supports the following
+                            ``output_options``: ``dim_name`` (default: ``"band"``) and ``dim_coords``.
        output_options: an optional dictionary of options passed to the :py:class:`writer.JSONWriter`, :py:class:`writer.PandasWriter`, :py:class:`writer.GDALWriter`, or :py:class:`writer.XArrayWriter`.
        progress: if `True`, a progress bar will be displayed. Alternatively, a
                  function may be provided that will be called with the completion fraction
                  and a status message.
     """
-    # Auto-resolve dim_coords for xarray inputs before prep_raster() converts
+    # Auto-resolve dim_name and dim_coords for xarray inputs before prep_raster() converts
     # them to RasterSource objects (after which the original DataArray is gone).
     if output == "xarray":
         output_options = dict(output_options or {})
-        if "dim_coords" not in output_options:
-            dim_name = output_options.get("dim_name", "band")
-            try:
-                import xarray
-                if isinstance(rast, (xarray.DataArray, xarray.Dataset)):
-                    if dim_name in rast.coords:
-                        output_options["dim_coords"] = rast.coords[dim_name].values
-            except ImportError:
-                pass
+        try:
+            import xarray
+            if isinstance(rast, (xarray.DataArray, xarray.Dataset)):
+                # For xarray, use first non-spatial variable to get dim_name and dim_coords
+                da = rast[next(iter(rast.data_vars))] if isinstance(rast, xarray.Dataset) else rast
+                spatial_dims = {
+                    d for d in da.dims
+                    if d.lower() in ("x", "y", "lon", "lat", "longitude", "latitude")
+                }
+                non_spatial_dims = [d for d in da.dims if d not in spatial_dims]
+
+                if len(non_spatial_dims) > 1:
+                    raise ValueError(
+                        f"XArrayWriter does not support DataArrays with multiple "
+                        f"non-spatial dimensions {non_spatial_dims}. "
+                        "Please select or stack dimensions first."
+                    )
+                
+                if len(non_spatial_dims) == 1:
+                    dim = non_spatial_dims[0]
+                    if "dim_name" not in output_options:
+                        output_options["dim_name"] = dim
+                    if "dim_coords" not in output_options and dim in da.coords:
+                        output_options["dim_coords"] = da.coords[dim].values
+
+        except ImportError:
+            pass
 
     rast = prep_raster(rast)
     weights = prep_raster(weights, name_root="weight")
