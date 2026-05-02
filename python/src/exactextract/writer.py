@@ -443,6 +443,7 @@ class XArrayWriter(Writer):
     """
 
     def __init__(self, *, dim_name="band", dim_coords=None):
+        super().__init__()
         self._dim_name = dim_name
         self._dim_coords = dim_coords
         self._ops = []
@@ -456,7 +457,10 @@ class XArrayWriter(Writer):
         self._id_cols.append(col_name)
 
     def write(self, feature):
-        props = feature["properties"]
+        f = JSONFeature()
+        feature.copy_to(f);
+
+        props = f.feature["properties"]
         row = {col: props.get(col) for col in self._id_cols}
         for op in self._ops:
             row[op.name] = props.get(op.name)
@@ -466,6 +470,7 @@ class XArrayWriter(Writer):
         import numpy as np
         import xarray as xr
         from collections import defaultdict
+        import re
 
         if not self._rows:
             return xr.Dataset()
@@ -479,8 +484,13 @@ class XArrayWriter(Writer):
         # Group ops by (var_name, stat) — each group spans one full set of bands
         groups = defaultdict(list)
         for op in self._ops:
-            var_name = (op.values.name or "").strip("_") or "values"
-            groups[(var_name, op.stat)].append(op)
+            stat = op.stat
+            suffix = f"_{stat}"
+            prefix = op.name[:-len(suffix)] if op.name.endswith(suffix) else op.name
+            # prefix is e.g. "t2m_band_1", "band_1", "t2m", ""
+            # strip band index to get var name
+            var_name = re.sub(r"_?band_\d+$", "", prefix) or "values"
+            groups[(var_name, stat)].append(op)
 
         # All groups must have the same number of bands
         group_lengths = {len(ops) for ops in groups.values()}
