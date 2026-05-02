@@ -58,7 +58,7 @@ def use_gdal_exceptions():
         gdal.UseExceptions()
 
 
-@pytest.mark.parametrize("output_format", ("geojson", "pandas"), indirect=True)
+@pytest.mark.parametrize("output_format", ("geojson", "pandas", "xarray"), indirect=True)
 @pytest.mark.parametrize(
     "stat,expected",
     [
@@ -110,6 +110,8 @@ def test_basic_stats(stat, expected, output_format):
 
     if output_format == "geojson":
         value = result[0]["properties"][stat]
+    elif output_format == "xarray":
+        value = result[stat].values[0]
     else:
         value = result[stat][0]
 
@@ -196,7 +198,7 @@ def test_coverage_area(strategy):
     assert np.all(result["c4"] == result["c1"])
 
 
-@pytest.mark.parametrize("output_format", ("geojson", "pandas"), indirect=True)
+@pytest.mark.parametrize("output_format", ("geojson", "pandas", "xarray"), indirect=True)
 def test_multiple_stats(output_format):
     rast = NumPyRasterSource(np.arange(1, 10).reshape(3, 3))
     square = JSONFeatureSource(make_rect(0.5, 0.5, 2.5, 2.5))
@@ -205,6 +207,11 @@ def test_multiple_stats(output_format):
 
     if output_format == "geojson":
         fields = result[0]["properties"]
+    elif output_format == "xarray":
+        fields = {
+            var: float(result[var].isel(feature=0).values)
+            for var in result.data_vars
+        }
     else:
         fields = result.to_dict(orient="records")[0]
 
@@ -594,6 +601,20 @@ def test_all_nodata_gdal():
     assert math.isnan(features[1]["mean"])
     assert features[1]["variety"] == 0
     assert features[1]["mode"] is None
+
+
+def test_all_nodata_xarray():
+    pytest.importorskip("xarray")
+
+    data = np.full((3, 3), -999, dtype=np.int32)
+    rast = NumPyRasterSource(data, nodata=-999)
+
+    square = make_rect(0.5, 0.5, 2.5, 2.5)
+    results = exact_extract(rast, square, ["mean", "mode", "variety"], output="xarray")
+
+    assert math.isnan(results["mean"].values[0])
+    assert results["variety"].values[0] == 0
+    assert results["mode"].values[0] is None
 
 
 def test_default_value():
@@ -1105,6 +1126,35 @@ def test_geopandas_output():
     assert result.area[0] == 9
 
     assert "Vermont" in str(result.geometry.crs)
+
+
+def test_xarray_output():
+    xr = pytest.importorskip("xarray")
+    osr = pytest.importorskip("osgeo.osr")
+
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(32145)
+
+    rast = NumPyRasterSource(
+        np.arange(1, 10, dtype=np.int32).reshape(3, 3), srs_wkt=srs.ExportToWkt()
+    )
+
+    square = JSONFeatureSource(
+        make_rect(0, 0, 3, 3, properties={"name": "test"}), srs_wkt=srs.ExportToWkt()
+    )
+
+    result = exact_extract(
+        rast,
+        square,
+        ["mean", "count", "variety"],
+        include_cols=["name"],
+        output="xarray",
+        include_geom=True,  # this will just be silently ignored since xarray cannot store geometries
+    )
+
+    assert isinstance(result, xr.DataArray)
+    assert result['count'].values[0] == 9
+    assert result['name'].values[0] == 'test'
 
 
 def test_qgis_output():
