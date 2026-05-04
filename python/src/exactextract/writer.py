@@ -499,16 +499,22 @@ class XArrayWriter(Writer):
                 row['band'] = int(band)
                 row['stat'] = stat
 
-            # prop should be varname and stat only
+            # prop should be stat and optionally varname
             else:
-                # Note: stat may include additional parts based on kwargs, eg quantile_25
+                # search for first string instance of stat
                 stat_pos = prop.find(op.stat)
                 if stat_pos == -1:
                     raise ValueError(f'Unable to parse {op.stat} statistic from field name {prop}')
-                varname = prop[:stat_pos].strip('_')
+                
+                # extract full stat name starting at first string instance
+                # eg stat may include additional parts based on kwargs, eg quantile_25
                 stat = prop[stat_pos:]
-                row['var'] = varname
                 row['stat'] = stat
+
+                # if stat starts in middle of string, then first part is varname
+                if stat_pos > 0:
+                    varname = prop[:stat_pos].strip('_')
+                    row['var'] = varname
 
             self.records.append(row)
 
