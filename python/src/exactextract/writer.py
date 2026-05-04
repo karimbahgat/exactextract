@@ -478,34 +478,37 @@ class XArrayWriter(Writer):
             # - variables and statistics: var1_mean, var1_sum, etc
             # - variables and bands and statistics: var1_band_1_mean, var1_band_1_sum, etc
             prop = op.name
-            stat = op.stat
             value = props.get(prop, None)  # sometimes statistic is missing from props
-            row = {"feature": feature_index, "value": value, "stat": stat}
-
-            # validate that the prop name ends with statistic
-            if not prop.endswith(stat):
-                raise Exception(f'Statistics operation field name should end with "{stat}", not "{prop}"')
-
-            # remove stat from right side of prop string to get the prefix
-            prefix = prop.removesuffix(stat).strip('_')
+            row = {"feature": feature_index, "value": value}
             
-            # if there is any prefix left it should follow strict conventions
-            if prefix:
-                # if prefix starts with band_ then that should be the only component
-                if prefix.startswith('band_'):
-                    _, band = prefix.split('_')
-                    row['band'] = int(band)
+            # if prop starts with band_, then that should be used to split into band and stat
+            if prop.startswith('band_'):
+                parts = prop.split('_')
+                band = parts[1]
+                stat = '_'.join(parts[2:])
+                row['band'] = int(band)
+                row['stat'] = stat
 
-                # if prefix contains _band_ then that should be used to split into varname and band
-                elif '_band_' in prefix:
-                    varname, band = prefix.split('_band_')
-                    row['var'] = varname
-                    row['band'] = int(band)
+            # if prop contains _band_ then that should be used to split into varname, band and stat
+            elif '_band_' in prop:
+                varname, band_plus_stat = prop.split('_band_')
+                parts = band_plus_stat.split('_')
+                band = parts[0]
+                stat = '_'.join(parts[1:])
+                row['var'] = varname
+                row['band'] = int(band)
+                row['stat'] = stat
 
-                # prefix should be varname only
-                else:
-                    varname = prefix
-                    row['var'] = varname
+            # prop should be varname and stat only
+            else:
+                # Note: stat may include additional parts based on kwargs, eg quantile_25
+                stat_pos = prop.find(op.stat)
+                if stat_pos == -1:
+                    raise ValueError(f'Unable to parse {op.stat} statistic from field name {prop}')
+                varname = prop[:stat_pos].strip('_')
+                stat = prop[stat_pos:]
+                row['var'] = varname
+                row['stat'] = stat
 
             self.records.append(row)
 
