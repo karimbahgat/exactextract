@@ -1152,7 +1152,7 @@ def test_xarray_output():
         include_geom=True,  # this will just be silently ignored since xarray cannot store geometries
     )
 
-    assert isinstance(result, xr.DataArray)
+    assert isinstance(result, xr.Dataset)
     assert result['count'].values[0] == 9
     assert result['name'].values[0] == 'test'
 
@@ -1711,6 +1711,25 @@ def test_gdal_multi_variable(multidim_nc, libname):
             "t2m_band_1_count": 4.0,
         }
     )
+
+
+@pytest.mark.parametrize("libname", ("gdal", "rasterio", "xarray"))
+def test_gdal_multi_variable_xarray_output(multidim_nc, libname):
+
+    square = make_rect(0.5, 0.5, 2.5, 2.5)
+
+    rast = open_with_lib(multidim_nc, libname)
+
+    results = exact_extract(rast, square, ["count", "sum"], output='xarray')
+
+    assert results['sum'].sel(var='tp', band=1).values[0] == pytest.approx(10.437034457921982)
+    assert results['sum'].sel(var='tp', band=2).values[0] == pytest.approx(17.4051194190979)
+    assert results['sum'].sel(var='t2m', band=1).values[0] == pytest.approx(28.0)
+    assert results['count'].sel(var='tp', band=2).values[0] == pytest.approx(4.0)
+    assert results['sum'].sel(var='t2m', band=2).values[0] == pytest.approx(76.0)
+    assert results['count'].sel(var='tp', band=1).values[0] == pytest.approx(4.0)
+    assert results['count'].sel(var='t2m', band=2).values[0] == pytest.approx(4.0)
+    assert results['count'].sel(var='t2m', band=1).values[0] == pytest.approx(4.0)
 
 
 @pytest.mark.parametrize("strategy", ("feature-sequential", "raster-sequential"))
