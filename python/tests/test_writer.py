@@ -214,8 +214,8 @@ def test_xarray_writer_band_stat(np_raster_source, point_features):
     w.add_column("id")
     w.add_operation(Operation("mean", "band_1_mean", np_raster_source))
     w.add_operation(Operation("mean", "band_2_mean", np_raster_source))
-    w.add_operation(Operation("mean", "band_1_sum", np_raster_source))
-    w.add_operation(Operation("mean", "band_2_sum", np_raster_source))
+    w.add_operation(Operation("sum", "band_1_sum", np_raster_source))
+    w.add_operation(Operation("sum", "band_2_sum", np_raster_source))
 
     for f in point_features:
         f.feature["properties"]["band_1_mean"] = float(f.feature["id"])

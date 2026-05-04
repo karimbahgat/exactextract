@@ -613,8 +613,8 @@ def test_all_nodata_xarray():
     results = exact_extract(rast, square, ["mean", "mode", "variety"], output="xarray")
 
     assert math.isnan(results["mean"].values[0])
+    assert math.isnan(results["mode"].values[0])
     assert results["variety"].values[0] == 0
-    assert results["mode"].values[0] is None
 
 
 def test_default_value():

@@ -467,7 +467,7 @@ class XArrayWriter(Writer):
                 value = props[col]
             self.extra_cols[col].append(value)
 
-        # all we have is a number of operations corresponding to properties per feature
+        # all we have is a list of operations corresponding to properties per feature
         # each operation/property name encodes dimensions: statistic, band, and variable
         # and its data value and dimension values should be added as a dict to .records
         for op in self.ops:
@@ -478,35 +478,34 @@ class XArrayWriter(Writer):
             # - variables and statistics: var1_mean, var1_sum, etc
             # - variables and bands and statistics: var1_band_1_mean, var1_band_1_sum, etc
             prop = op.name
-            value = props[prop]
-            row = {"feature": feature_index, "value": value}
+            stat = op.stat
+            value = props.get(prop, None)  # sometimes statistic is missing from props
+            row = {"feature": feature_index, "value": value, "stat": stat}
 
-            # Note: below relies on strict naming conventions and number of underscores
-            # meaning variables or operation names cannot have underscores in them
-            # TODO: Make this more robust... 
-            prop_parts = prop.split('_')
-            if len(prop_parts) == 1:
-                # single statistic
-                stat = prop
-                row.update({"stat": stat})
+            # validate that the prop name ends with statistic
+            if not prop.endswith(stat):
+                raise Exception(f'Statistics operation field name should end with "{stat}", not "{prop}"')
 
-            elif len(prop_parts) == 2:
-                # variable + statistic
-                varname, stat = prop_parts
-                row.update({"var": varname, "stat": stat})
+            # remove stat from right side of prop string to get the prefix
+            prefix = prop.removesuffix(stat).strip('_')
+            
+            # if there is any prefix left it should follow strict conventions
+            if prefix:
+                # if prefix starts with band_ then that should be the only component
+                if prefix.startswith('band_'):
+                    _, band = prefix.split('_')
+                    row['band'] = int(band)
 
-            elif len(prop_parts) == 3:
-                # band (band_1 etc) + statistic
-                _, band, stat = prop_parts
-                row.update({"band": int(band), "stat": stat})
+                # if prefix contains _band_ then that should be used to split into varname and band
+                elif '_band_' in prefix:
+                    varname, band = prefix.split('_band_')
+                    row['var'] = varname
+                    row['band'] = int(band)
 
-            elif len(prop_parts) == 4:
-                # variable + band (band_1 etc) + statistic
-                varname, _, band, stat = prop_parts
-                row.update({"var": varname, "band": int(band), "stat": stat})
-
-            else:
-                raise ValueError(f"Unexpected property name format: {prop!r}")
+                # prefix should be varname only
+                else:
+                    varname = prefix
+                    row['var'] = varname
 
             self.records.append(row)
 
@@ -523,6 +522,7 @@ class XArrayWriter(Writer):
             index=dim_cols,
             columns="stat",
             values="value",
+            dropna=False,
         )
 
         # drop var from index if only one unique value
