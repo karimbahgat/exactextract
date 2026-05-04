@@ -423,10 +423,12 @@ class GDALWriter(Writer):
 
 class XArrayWriter(Writer):
     """
-    Writer that returns an :py:class:`xarray.Dataset` or :py:class:`xarray.DataArray`,
-    depending on whether input data contained one or multiple variables. 
-    Returned dimensions depend on the structure of the input data: ``(feature, stat)``
-    for single band raster, or ``(feature, band, stat)`` for multi band raster. 
+    Writer that returns an :py:class:`xarray.Dataset`, with one or more data variables
+    for each of the computed statistics. 
+    Returned dimensions depend on the structure of the input raster: ``(feature)`` for single variable and single band 
+    raster, ``(feature, band)`` for single variable and multi band raster, 
+    ``(feature, var)`` for multi variable and single band raster, and ``(feature, var, band)``
+    for multi variable and multi band raster. 
     If the input raster has multiple dimensions (e.g. time x level), band numbering follows 
     the same logic as other Writers, bands are enumerated in C-order (last dimension varies 
     fastest), matching the order returned by ``rasterio.count``.
@@ -513,21 +515,22 @@ class XArrayWriter(Writer):
         import pandas as pd
         df = pd.DataFrame(self.records)
         
-        # set multiindex to what we want as xarray dims
-        dim_cols = [c for c in df.columns if c != "value"]
-        df = df.set_index(dim_cols)
+        # get which xarray dims to keep
+        dim_cols = [c for c in df.columns if c not in ("value", "stat")]
+
+        # pivot stat into columns
+        df = df.pivot_table(
+            index=dim_cols,
+            columns="stat",
+            values="value",
+        )
+
+        # drop var from index if only one unique value
+        if "var" in df.index.names and df.index.get_level_values("var").nunique() == 1:
+            df = df.droplevel("var")
 
         # convert to xarray
-        if "var" in df.index.names:
-            # xarray Dataset with one DataArray per "var"
-            d = (
-                df["value"]
-                .to_xarray()
-                .to_dataset(dim="var")
-            )
-        else:
-            # single xarray DataArray
-            d = df["value"].to_xarray()
+        ds = df.to_xarray()
 
         # assign extra columns as coords
         # all extra columns are based on the feature dimension
@@ -538,6 +541,6 @@ class XArrayWriter(Writer):
                 for col, col_values
                 in self.extra_cols.items()
             }
-            d = d.assign_coords(**coords)
+            ds = ds.assign_coords(**coords)
 
-        return d
+        return ds
