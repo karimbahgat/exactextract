@@ -181,26 +181,234 @@ def test_qgis_writer(np_raster_source, point_features):
     assert qgs_features[1].hasGeometry()
     assert qgs_features[1].geometry().asWkt() == "Point (2 2)"
 
-
-def test_xarray_writer(np_raster_source, point_features):
+def test_xarray_writer_stat(np_raster_source, point_features):
     xr = pytest.importorskip("xarray")
 
-    times = np.array([np.datetime64("2020-01-01"), np.datetime64("2020-02-01")])
+    w = XArrayWriter()
 
-    w = XArrayWriter(dim_name="time", dim_coords=times)
+    w.add_column("id")
+    w.add_operation(Operation("mean", "mean", np_raster_source))
+    w.add_operation(Operation("sum", "sum", np_raster_source))
+
+    for f in point_features:
+        f.feature["properties"]["mean"] = float(f.feature["id"])
+        f.feature["properties"]["sum"] = float(f.feature["id"]) * 2
+        w.write(f)
+
+    da = w.features()
+
+    assert isinstance(da, xr.DataArray)
+    assert len(da.coords["feature"]) == 2
+    assert len(da.coords["id"]) == 2
+    assert 'mean' in da.coords["stat"]
+    assert 'sum' in da.coords["stat"]
+    assert "band" not in da.coords
+
+def test_xarray_writer_band_stat(np_raster_source, point_features):
+    xr = pytest.importorskip("xarray")
+
+    w = XArrayWriter()
 
     w.add_column("id")
     w.add_operation(Operation("mean", "band_1_mean", np_raster_source))
     w.add_operation(Operation("mean", "band_2_mean", np_raster_source))
+    w.add_operation(Operation("mean", "band_1_sum", np_raster_source))
+    w.add_operation(Operation("mean", "band_2_sum", np_raster_source))
 
     for f in point_features:
         f.feature["properties"]["band_1_mean"] = float(f.feature["id"])
         f.feature["properties"]["band_2_mean"] = float(f.feature["id"]) * 2
+        f.feature["properties"]["band_1_sum"] = float(f.feature["id"])
+        f.feature["properties"]["band_2_sum"] = float(f.feature["id"]) * 2
+        w.write(f)
+
+    da = w.features()
+
+    assert isinstance(da, xr.DataArray)
+    assert len(da.coords["feature"]) == 2
+    assert len(da.coords["id"]) == 2
+    assert len(da.coords["band"]) == 2
+    assert 'mean' in da.coords["stat"]
+    assert 'sum' in da.coords["stat"]
+
+def test_xarray_writer_var_stat(np_raster_source, point_features):
+    xr = pytest.importorskip("xarray")
+
+    w = XArrayWriter()
+
+    w.add_column("id")
+    w.add_operation(Operation("mean", "t2m_mean", np_raster_source))
+    w.add_operation(Operation("mean", "tp_mean", np_raster_source))
+    w.add_operation(Operation("sum", "t2m_sum", np_raster_source))
+    w.add_operation(Operation("sum", "tp_sum", np_raster_source))
+
+    for f in point_features:
+        f.feature["properties"]["t2m_mean"] = float(f.feature["id"])
+        f.feature["properties"]["tp_mean"] = float(f.feature["id"]) * 2
+        f.feature["properties"]["t2m_sum"] = float(f.feature["id"])
+        f.feature["properties"]["tp_sum"] = float(f.feature["id"]) * 2
         w.write(f)
 
     ds = w.features()
 
     assert isinstance(ds, xr.Dataset)
-    assert ds.dims["feature"] == 2
-    assert ds.dims["time"] == 2
-    np.testing.assert_array_equal(ds.coords["time"], times)
+    assert len(ds.coords["feature"]) == 2
+    assert len(ds.coords["id"]) == 2
+    assert "band" not in ds.coords
+    assert 'mean' in ds.coords["stat"]
+    assert 'sum' in ds.coords["stat"]
+    assert ds["t2m"].dims == ("feature", "stat")
+    assert ds["tp"].dims == ("feature", "stat")
+
+
+def test_xarray_writer_var_band_stat(np_raster_source, point_features):
+    xr = pytest.importorskip("xarray")
+
+    w = XArrayWriter()
+
+    w.add_column("id")
+    w.add_operation(Operation("mean", "t2m_band_1_mean", np_raster_source))
+    w.add_operation(Operation("mean", "tp_band_1_mean", np_raster_source))
+    w.add_operation(Operation("mean", "t2m_band_2_mean", np_raster_source))
+    w.add_operation(Operation("mean", "tp_band_2_mean", np_raster_source))
+
+    for f in point_features:
+        f.feature["properties"]["t2m_band_1_mean"] = float(f.feature["id"])
+        f.feature["properties"]["tp_band_1_mean"] = float(f.feature["id"]) * 2
+        f.feature["properties"]["t2m_band_2_mean"] = float(f.feature["id"])
+        f.feature["properties"]["tp_band_2_mean"] = float(f.feature["id"]) * 2
+        w.write(f)
+
+    ds = w.features()
+
+    assert isinstance(ds, xr.Dataset)
+    assert len(ds.coords["feature"]) == 2
+    assert len(ds.coords["id"]) == 2
+    assert 'mean' in ds.coords["stat"]
+    assert ds["t2m"].dims == ("feature", "band", "stat")
+    assert ds["tp"].dims == ("feature", "band", "stat")
+
+
+###########
+# BELOW TESTS FOR ACTUAL XARRAY INPUT SO SHOULD MAYBE BE ELSEWHERE
+
+def make_rect(xmin, ymin, xmax, ymax, id=None, properties=None):
+    f = {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+                [[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax], [xmin, ymin]]
+            ],
+        },
+    }
+
+    if id is not None:
+        f["id"] = id
+    if properties is not None:
+        f["properties"] = properties
+
+    return f
+
+def make_xarray(xmin, ymin, xmax, ymax, n):
+    import xarray as xr
+    da = xr.DataArray(
+        data=np.ones((n, n)),
+        dims=["y", "x"],
+        coords={
+            "x": np.linspace(xmin, xmax, n),
+            "y": np.linspace(ymin, ymax, n),
+        },
+    )
+    return da
+
+def make_xarray_with_time(xmin, ymin, xmax, ymax, n):
+    import xarray as xr
+    da = xr.DataArray(
+        data=np.stack([
+            np.ones((n, n)) * 1, # time 1
+            np.ones((n, n)) * 2, # time 2
+            np.ones((n, n)) * 3, # time 3
+        ]),
+        dims=["time", "y", "x"],
+        coords={
+            "time": ["2021-01-01", "2021-02-01", "2021-03-01"],
+            "x": np.linspace(xmin, xmax, n),
+            "y": np.linspace(ymin, ymax, n),
+        },
+    )
+    return da
+
+def test_xarray_writer_from_da(point_features):
+    xr = pytest.importorskip("xarray")
+    rxr = pytest.importorskip("rioxarray")
+
+    rast = make_xarray(0, 0, 3, 3, n=10)
+
+    square = make_rect(0.5, 0.5, 2.5, 2.5)
+
+    from exactextract import exact_extract
+    da = exact_extract(rast, square, ["count", "sum"], output=XArrayWriter())
+
+    assert isinstance(da, xr.DataArray)
+    assert len(da.coords["feature"]) == 1
+    assert da.dims == ('feature', 'stat')
+    assert 'count' in da.coords["stat"]
+    assert 'sum' in da.coords["stat"]
+
+def test_xarray_writer_from_da_with_time(point_features):
+    xr = pytest.importorskip("xarray")
+    rxr = pytest.importorskip("rioxarray")
+
+    rast = make_xarray_with_time(0, 0, 3, 3, n=10)
+
+    square = make_rect(0.5, 0.5, 2.5, 2.5)
+
+    from exactextract import exact_extract
+    da = exact_extract(rast, square, ["count", "sum"], output=XArrayWriter())
+
+    assert isinstance(da, xr.DataArray)
+    assert len(da.coords["feature"]) == 1
+    assert len(da.coords["band"]) == 3
+    assert da.dims == ('feature', 'band', 'stat')
+    assert 'count' in da.coords["stat"]
+    assert 'sum' in da.coords["stat"]
+
+def test_xarray_writer_from_ds(point_features):
+    xr = pytest.importorskip("xarray")
+    rxr = pytest.importorskip("rioxarray")
+
+    arr = make_xarray(0, 0, 3, 3, n=10)
+    rast = xr.Dataset({'var1': arr, 'var2': arr * 2})
+
+    square = make_rect(0.5, 0.5, 2.5, 2.5)
+
+    from exactextract import exact_extract
+    ds = exact_extract(rast, square, ["count", "sum"], output=XArrayWriter())
+
+    assert isinstance(ds, xr.Dataset)
+    assert len(ds.coords["feature"]) == 1
+    assert ds['var1'].dims == ('feature', 'stat')
+    assert ds['var2'].dims == ('feature', 'stat')
+    assert 'count' in ds.coords["stat"]
+    assert 'sum' in ds.coords["stat"]
+
+def test_xarray_writer_from_ds_with_time(point_features):
+    xr = pytest.importorskip("xarray")
+    rxr = pytest.importorskip("rioxarray")
+
+    arr = make_xarray_with_time(0, 0, 3, 3, n=10)
+    rast = xr.Dataset({'var1': arr, 'var2': arr * 2})
+
+    square = make_rect(0.5, 0.5, 2.5, 2.5)
+
+    from exactextract import exact_extract
+    ds = exact_extract(rast, square, ["count", "sum"], output=XArrayWriter())
+
+    assert isinstance(ds, xr.Dataset)
+    assert len(ds.coords["feature"]) == 1
+    assert len(ds.coords["band"]) == 3
+    assert ds['var1'].dims == ('feature', 'band', 'stat')
+    assert ds['var2'].dims == ('feature', 'band', 'stat')
+    assert 'count' in ds.coords["stat"]
+    assert 'sum' in ds.coords["stat"]
