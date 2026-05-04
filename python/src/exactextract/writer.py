@@ -443,11 +443,9 @@ class XArrayWriter(Writer):
         self.feature_count = 0
 
     def add_operation(self, op):
-        # this should later become a special operation/stat dimension
         self.ops.append(op)
 
     def add_column(self, col_name):
-        # all other columns should become their own dimensions
         self.extra_cols[col_name] = []
 
     def write(self, feature):
