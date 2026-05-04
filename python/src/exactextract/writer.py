@@ -423,111 +423,121 @@ class GDALWriter(Writer):
 
 class XArrayWriter(Writer):
     """
-    Writer that returns an :py:class:`xarray.Dataset` with dimensions
-    ``(feature, <dim_name>)``.
-
-    Unlike the other writers, the non-spatial dimension (e.g. time) cannot
-    be inferred from exactextract's internal data model, which only tracks
-    band indices. When the input raster is an :py:class:`xarray.DataArray`
-    or :py:class:`xarray.Dataset`, ``dim_coords`` are resolved automatically
-    by :py:func:`exact_extract` if ``dim_name`` matches a coordinate on the
-    input. For all other raster types, integer band indices are used unless
-    ``dim_coords`` is provided explicitly via ``output_options``.
-
-    Args:
-        dim_name: Name of the non-spatial output dimension. Defaults to
-            ``"band"``. Common values: ``"time"``, ``"level"``.
-        dim_coords: Coordinate values for the non-spatial dimension, one per
-            band in the source raster (e.g. ``ds["time"].values``). If not
-            provided, 0-based integer indices are used.
+    Writer that returns an :py:class:`xarray.Dataset` or :py:class:`xarray.DataArray`,
+    depending on whether input data contained one or multiple variables. 
+    Returned dimensions depend on the structure of the input data: ``(feature, stat)``
+    for single band raster, or ``(feature, band, stat)`` for multi band raster. 
+    If the input raster has multiple dimensions (e.g. time x level), band numbering follows 
+    the same logic as other Writers, bands are enumerated in C-order (last dimension varies 
+    fastest), matching the order returned by ``rasterio.count``.
     """
 
-    def __init__(self, *, dim_name="band", dim_coords=None):
+    def __init__(self):
         super().__init__()
-        self._dim_name = dim_name
-        self._dim_coords = dim_coords
-        self._ops = []
-        self._id_cols = []
-        self._rows = []
+
+        self.ops = []
+        self.extra_cols = {}
+        self.records = []
+        self.feature_count = 0
 
     def add_operation(self, op):
-        self._ops.append(op)
+        # this should later become a special operation/stat dimension
+        self.ops.append(op)
 
     def add_column(self, col_name):
-        self._id_cols.append(col_name)
+        # all other columns should become their own dimensions
+        self.extra_cols[col_name] = []
 
     def write(self, feature):
         f = JSONFeature()
-        feature.copy_to(f);
-
+        feature.copy_to(f)
         props = f.feature["properties"]
-        row = {col: props.get(col) for col in self._id_cols}
-        for op in self._ops:
-            row[op.name] = props.get(op.name)
-        self._rows.append(row)
+
+        # get feature index
+        self.feature_count += 1
+        feature_index = int(self.feature_count)
+
+        # add any extra column values
+        for col in self.extra_cols:
+            if col == 'id' and 'id' in f.feature:
+                value = f.feature["id"]
+            else:
+                value = props[col]
+            self.extra_cols[col].append(value)
+
+        # all we have is a number of operations corresponding to properties per feature
+        # each operation/property name encodes dimensions: statistic, band, and variable
+        # and its data value and dimension values should be added as a dict to .records
+        for op in self.ops:
+            # extract misc dims from operation property name
+            # possible operation property templates:
+            # - statistics: mean, sum, etc
+            # - bands and statistics: band_1_mean, band_1_sum, etc
+            # - variables and statistics: var1_mean, var1_sum, etc
+            # - variables and bands and statistics: var1_band_1_mean, var1_band_1_sum, etc
+            prop = op.name
+            value = props[prop]
+            row = {"feature": feature_index, "value": value}
+
+            # Note: below relies on strict naming conventions and number of underscores
+            # meaning variables or operation names cannot have underscores in them
+            # TODO: Make this more robust... 
+            prop_parts = prop.split('_')
+            if len(prop_parts) == 1:
+                # single statistic
+                stat = prop
+                row.update({"stat": stat})
+
+            elif len(prop_parts) == 2:
+                # variable + statistic
+                varname, stat = prop_parts
+                row.update({"var": varname, "stat": stat})
+
+            elif len(prop_parts) == 3:
+                # band (band_1 etc) + statistic
+                _, band, stat = prop_parts
+                row.update({"band": int(band), "stat": stat})
+
+            elif len(prop_parts) == 4:
+                # variable + band (band_1 etc) + statistic
+                varname, _, band, stat = prop_parts
+                row.update({"var": varname, "band": int(band), "stat": stat})
+
+            else:
+                raise ValueError(f"Unexpected property name format: {prop!r}")
+
+            self.records.append(row)
 
     def features(self):
-        import numpy as np
-        import xarray as xr
-        from collections import defaultdict
-        import re
+        # make pandas df from dict records
+        import pandas as pd
+        df = pd.DataFrame(self.records)
+        
+        # set multiindex to what we want as xarray dims
+        dim_cols = [c for c in df.columns if c != "value"]
+        df = df.set_index(dim_cols)
 
-        if not self._rows:
-            return xr.Dataset()
-
-        feature_ids = (
-            [r[self._id_cols[0]] for r in self._rows]
-            if self._id_cols
-            else list(range(len(self._rows)))
-        )
-
-        # Group ops by (var_name, stat) — each group spans one full set of bands
-        groups = defaultdict(list)
-        for op in self._ops:
-            stat = op.stat
-            suffix = f"_{stat}"
-            prefix = op.name[:-len(suffix)] if op.name.endswith(suffix) else op.name
-            # prefix is e.g. "t2m_band_1", "band_1", "t2m", ""
-            # strip band index to get var name
-            var_name = re.sub(r"_?band_\d+$", "", prefix) or "values"
-            groups[(var_name, stat)].append(op)
-
-        # All groups must have the same number of bands
-        group_lengths = {len(ops) for ops in groups.values()}
-        if len(group_lengths) != 1:
-            raise ValueError(
-                f"Unequal number of bands across stat/variable groups: {group_lengths}"
+        # convert to xarray
+        if "var" in df.index.names:
+            # xarray Dataset with one DataArray per "var"
+            d = (
+                df["value"]
+                .to_xarray()
+                .to_dataset(dim="var")
             )
-        n_bands = group_lengths.pop()
+        else:
+            # single xarray DataArray
+            d = df["value"].to_xarray()
 
-        dim_coords = (
-            np.asarray(self._dim_coords)
-            if self._dim_coords is not None
-            else np.arange(n_bands)
-        )
+        # assign extra columns as coords
+        # all extra columns are based on the feature dimension
+        if self.extra_cols:
+            col_dim = 'feature'
+            coords = {
+                col: (col_dim, col_values)
+                for col, col_values
+                in self.extra_cols.items()
+            }
+            d = d.assign_coords(**coords)
 
-        if len(dim_coords) != n_bands:
-            raise ValueError(
-                f"Length of dim_coords ({len(dim_coords)}) does not match "
-                f"number of bands per group ({n_bands})."
-            )
-
-        # Use plain var_name when there is only one stat, var_name_stat otherwise
-        multi_stat = len({stat for _, stat in groups}) > 1
-
-        data_vars = {}
-        for (var_name, stat), ops in groups.items():
-            da_name = f"{var_name}_{stat}" if multi_stat else var_name
-            data = np.array(
-                [[r[op.name] for op in ops] for r in self._rows],
-                dtype=float,
-            )
-            data_vars[da_name] = (["feature", self._dim_name], data)
-
-        return xr.Dataset(
-            data_vars,
-            coords={
-                self._dim_name: dim_coords,
-                "feature": feature_ids,
-            },
-        )
+        return d
